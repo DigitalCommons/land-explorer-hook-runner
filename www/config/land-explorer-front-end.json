@@ -1,0 +1,19 @@
+{
+    "cmd": [
+        "bash",
+        "scripts/deploy.sh",
+        "development"
+    ],
+    "constraints": {
+        "github": {
+            "ref": "refs/heads/development"
+        }
+    },
+    "env": {
+        "CWD": "/root/land-explorer-front-end",
+        "PATH": "$PATH",
+        "HOME": "$HOME",
+        "YARN_CACHE_FOLDER": "/usr/local/share/.cache/yarn",
+        "YARN_DISABLE_SELF_UPDATE_CHECK": "true"
+    }
+}

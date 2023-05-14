@@ -1,0 +1,17 @@
+{
+    "cmd": [
+        "bash",
+        "scripts/deploy.sh",
+        "development"
+    ],
+    "constraints": {
+        "github": {
+            "ref": "refs/heads/development"
+        }
+    },
+    "env": {
+        "CWD": "/root/land-explorer-back-end",
+        "PATH": "$PATH",
+        "HOME": "$HOME"
+    }
+}
