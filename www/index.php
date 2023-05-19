@@ -45,22 +45,23 @@
     </ul>
     
     <h2>Jobs</h2>
-    <p>This is essentially the raw output of the task-spooler command</p>
+    <p>A list of the 10 most recent jobs, newest at the top.</p>
     <?php
-
-      $tspout = shell_exec("tsp");
-      $html = preg_replace(
-        '/^(ID)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/m',
-        '<tr><th>$1</th><th>$2</th><th>$3</th><th>$4</th><th>$5</th><th>$6</th></tr>',
-        $tspout
-      );
-      $html = preg_replace(
-        '/^(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/m',
-        '<tr><td>$1</td><td><a href="tsp.php?id=$1">$2</a></td><td><a href="tsp.php?id=$1&output">$3</a></td><td>$4</td><td>$5</td><td><tt class="trunc" title="$6">$6</tt></td></tr>',
-        $html
-      );
+      $html = "<tr><th>Start time</th><th>Target</th><th>RC</th><th>Output</th><th>Commit (if triggered by GitHub)</th></tr>\n";
+      $f = fopen("jobs.csv", "r");
+      while (($csvArray[] = fgetcsv($f)) !== false);
+      fclose($f);
+      // The last element will be empty so slice 11 elements
+      foreach (array_reverse(array_slice($csvArray, -11)) as $row) {
+        if (!empty($row)) {
+          $output_link = ($row[3] == 'NA') ? 'Not available' : '<a href="'.$row[3].'">View</a>';
+          $git_commit_short = substr(basename($row[4]), 0, 7);
+          $github_link = ($row[4] == 'NA') ? '' : '<a href="'.$row[4].'" target="_blank">'.$git_commit_short.'</a>';
+          $html .= "<tr><td>".$row[0]."</td><td>".$row[1]."</td><td>".$row[2]."</td><td>".$output_link."</td><td>".$github_link."</td></tr>\n";
+        }
+      }
     ?>
-    <table>
+    <table border="1" cellpadding="10">
       <?= $html ?>
     </table>
   </body>

@@ -22,8 +22,10 @@ function timestamp() {
 
 $start_ts = date('c', $_SERVER["REQUEST_TIME"]); // This should match apache logs more closely
 $log_dir = getenv('LOG_DIR');
-if (isset($log_dir))
+if (isset($log_dir)) {
   $log_file = "$log_dir/$start_ts.run.log";
+}
+$log_file_if_set = $log_file ?? "NA";
 
 function locallog($msg) {
   global $log_file;
@@ -33,18 +35,25 @@ function locallog($msg) {
   }
 }
 
+// Turn on output if `echo` paramter present
 $echo = false;
-function echo_out($msg) {
-  global $echo;
-  if ($echo)
-    echo($msg);
-  else
-    echo('.');
+if (isset($_GET['echo'])) {
+  $echo = true;
 }
 
 $version = trim(strtok(file_get_contents(dirname(__FILE__).'/VERSION.TXT'), PHP_EOL)) ?: '?';
 locallog(['when' => 'begin', 'timestamp' => $start_ts, 'version' => $version,
           'request' => $_REQUEST, 'server' => $_SERVER]);
+
+$request_params = file_get_contents('php://input');
+
+// Save Github URL
+$params = json_decode($request_params, true);
+if (gettype($params) === 'array' && isset($params['repository']) && isset($params['commit'])) {
+  $github_url = "https://github.com/".$params['repository']."/commit/".$params['commit'];
+} else {
+  $github_url = "NA";
+}
 
 /*
  * Wrapper for proc_*() functions.
@@ -76,10 +85,21 @@ function proc_exec($cmd, $env, $cwd)
       $first_exitcode = $pstatus["exitcode"];
       $flag = true;
     }
-    if (strlen($buffer))
-      echo_out($buffer);
-    if (isset($errbuf) && strlen($errbuf))
-      echo_out("ERR: " . $errbuf);
+
+    global $echo;
+    if (strlen($buffer)) {
+      if ($echo) {
+        echo($buffer);
+      } else {
+        // We are using task spooler so save job ID
+        $trimmed = trim($buffer);
+        if (strlen($trimmed))
+          $tsp_id = $trimmed;
+      }
+    }
+
+    if (isset($errbuf) && strlen($errbuf) && $echo)
+      echo("ERR: " . $errbuf);
   }
 
   foreach ($pipes as $pipe)
@@ -110,7 +130,7 @@ function proc_exec($cmd, $env, $cwd)
   if ($ret == 127)
     throw new Exception("Command not found: $cmd[0]\n");
 
-  return $ret;
+  return array("rc"=>$ret, "tsp_id"=>$tsp_id);
 }
 
 
@@ -188,7 +208,8 @@ function check_constraints($constraints, $is_forced) {
         $checks[$type] = ['failed' => 'malformed config', 'config' => $config];
         break;
       }
-      $payload = json_decode(file_get_contents('php://input'), true);
+      global $request_params;
+      $payload = json_decode($request_params, true);
       if (gettype($payload) !== 'array') {
         if ($is_forced) {
           $payload = []; // If we are forced and the payload is invalid, make it usable.
@@ -310,20 +331,6 @@ function load_env($env_config, $interpolator) {
   return $env_interpolated;
 }
 
-// A prefix to add to commands
-$cmd_prefix = [];
-
-// Turn on output if `echo` paramter present
-if (isset($_GET['echo'])) {
-  $echo = true;
-}
-else {
-  // Otherwise, run using task spooler.
-  // This task-spooler prefix, causes jobs to on a queue
-  // Assumes task-spooler is installed!
-  $cmd_prefix = ['tsp'];
-}
-
 // Get 'target' parameter and split on commas into multiple targets
 // Guard against garbage in these target parameters
 $targets = [];
@@ -402,9 +409,14 @@ if (count($invalid_targets) === 0) {
       else {
         // Go ahead
 
-        // Add cmd prefix
-        $cmd = array_merge($cmd_prefix, $cmd);
-
+        if (!$echo) {
+          // If echo is not set, run using task spooler.
+          // This task-spooler prefix, causes jobs to on a queue
+          // Assumes task-spooler is installed!
+          $cmd_prefix = ['tsp', '-L', $target];
+          $cmd = array_merge($cmd_prefix, $cmd);
+        }
+  
         // Export the selected global environment vars if
         // RUNNER_EXPORT_VARS is defined
         $env = [];
@@ -446,17 +458,32 @@ if (count($invalid_targets) === 0) {
         echo(":target $target:command: ". join(" ", $cmd)."\n");
         echo(":target $target:pwd: $dir\n\n");
         
-        $rc = proc_exec($cmd, $env, $dir);
+        $ret = proc_exec($cmd, $env, $dir);
+        $rc = $ret["rc"];
+        $tsp_id = $ret["tsp_id"];
       
         locallog(['when' => 'exit', 'rc' => $rc, 'target' => $target]);
         echo("\n:target $target:stopping: returned $rc\n");
         $status[$target] = ['result' => $rc];
+
+        // Record job
+        if ($echo) {
+          // Immediately if not using task spooler
+          file_put_contents("jobs.csv", "$start_ts,$target,$rc,$log_file_if_set,$github_url"."\n", FILE_APPEND);
+        } else {
+          // Queue a task spooler job to save the job output
+          $tsp_cmd = ["tsp","bash", "save-tsp-output.sh", $tsp_id, $start_ts, $target, $log_file_if_set, $github_url];
+          locallog(['when' => 'saving_tsp_output', 'cmd' => $tsp_cmd]);
+          $ret = proc_exec($tsp_cmd, $env, dirname(__FILE__));
+          locallog(['when' => 'saved_tsp_output', 'rc' => $ret["rc"]]);
+        }
       }
     }
     catch(Exception $e) {
       echo("\n:target $target:stopping: exception, see logs\n");
       locallog(['when' => 'exception', 'exception' => "$e", 'target' => $target]);
       $status[$target] = ['result' => 'exception'];
+      file_put_contents("jobs.csv", "$start_ts,$target,1,$log_file_if_set,$github_url"."\n", FILE_APPEND);
     }
   }
 
@@ -471,5 +498,8 @@ else {
   locallog(['when' => 'invalid target', 'code' => 400,
             'message' => "bad or invalid query parameter targets: $bad_targets"]);
   echo ":targets not found: $bad_targets";
+
+  // Record failed job
+  file_put_contents("jobs.csv", "$start_ts,$bad_targets,1,$log_file_if_set,$github_url"."\n", FILE_APPEND);
 }
 ?>

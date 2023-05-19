@@ -1,0 +1,10 @@
+{
+    "cmd": [
+        "bash",
+        "deploy.sh"
+    ],
+    "env": {
+        "CWD": "/root/land-explorer-hook-runner",
+        "PATH": "$PATH"
+    }
+}
