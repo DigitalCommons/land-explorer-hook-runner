@@ -78,8 +78,12 @@ function proc_exec($cmd, $env, $cwd)
     throw new Exception("Error: not enough FD or out of memory.\n");
   }
 
-  while (($buffer = fgets($pipes[FD_READ], BUF_SIZ)) != NULL
-         || ($errbuf = fgets($pipes[FD_ERR], BUF_SIZ)) != NULL) {
+  $buffer = "";
+  $errbuf = "";
+  while ($buffer !== false || $errbuf !== false) {
+    $buffer = fgets($pipes[FD_READ], BUF_SIZ);
+    $errbuf = fgets($pipes[FD_ERR], BUF_SIZ);
+
     if (!isset($flag)) {
       $pstatus = proc_get_status($ptr);
       $first_exitcode = $pstatus["exitcode"];
@@ -87,19 +91,19 @@ function proc_exec($cmd, $env, $cwd)
     }
 
     global $echo;
+    if ($echo && strlen($errbuf))
+      echo($errbuf);
+
     if (strlen($buffer)) {
       if ($echo) {
         echo($buffer);
       } else {
-        // We are using task spooler so save job ID
+        // We are using task spooler so save job ID from stdout
         $trimmed = trim($buffer);
         if (strlen($trimmed))
           $tsp_id = $trimmed;
       }
     }
-
-    if (isset($errbuf) && strlen($errbuf) && $echo)
-      echo("ERR: " . $errbuf);
   }
 
   foreach ($pipes as $pipe)
